@@ -11,7 +11,7 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.RespectNullableAnnotations = true;
     o.SerializerOptions.RespectRequiredConstructorParameters = true;
 });
-// Los errores de formato (400) también pasan por ApiExceptionHandler, para que siempre lleven "detail".
+
 builder.Services.Configure<RouteHandlerOptions>(o => o.ThrowOnBadRequest = true);
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<ApiExceptionHandler>();
@@ -21,11 +21,15 @@ builder.Services.AddHabitaApplication(builder.Configuration).AddHabitaInfrastruc
 var app = builder.Build();
 
 app.UseExceptionHandler();
-if (app.Environment.IsDevelopment()) app.MapOpenApi(); // /openapi/v1.json
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+    app.UseSwaggerUI(o => o.SwaggerEndpoint("/openapi/v1.json", "Habita API v1"));
+}
 app.MapHabitaApi();
 
 await app.Services.InitializeHabitaDatabaseAsync();
 await app.RunAsync();
 
 /// <summary>Punto de entrada; parcial para WebApplicationFactory en las pruebas.</summary>
-public partial class Program;
+public static partial class Program;
