@@ -1,0 +1,19 @@
+# Git guarda el texto con LF; cada sistema usa sus finales de línea al hacer checkout.
+* text=auto
+
+# Archivos que exigen un final de línea concreto
+*.sh   text eol=lf
+*.sln  text eol=crlf
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binarios
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.webm binary
+*.mp3  binary
+*.mp4  binary
+*.wav  binary
+*.db   binary

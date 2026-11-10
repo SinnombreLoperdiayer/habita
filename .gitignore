@@ -1,0 +1,20 @@
+# Dependencias y compilación del frontend
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+coverage/
+
+# Variables de entorno y secretos (los de .NET van en user-secrets)
+.env
+.env.*
+!.env.example
+
+# Registros y archivos del sistema operativo o del editor
+*.log
+.DS_Store
+Thumbs.db
+.vs/
+
+# Restos del antiguo entorno Workshop (start.sh)
+.workshop-arena-install.lock
