@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!-- CA1848/CA1873: plantillas de logging de alto rendimiento, innecesarias en este volumen. CA1711: IJobQueue es un nombre intencional. -->
+    <NoWarn>$(NoWarn);CA1848;CA1873;CA1711</NoWarn>
+  </PropertyGroup>
+</Project>

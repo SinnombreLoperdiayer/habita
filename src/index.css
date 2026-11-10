@@ -1,0 +1,72 @@
+@import "tailwindcss";
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme inline {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-border: var(--border);
+  --color-secondary: var(--secondary);
+  --color-accent: var(--accent);
+  --color-positive: var(--positive);
+  --color-positive-soft: var(--positive-soft);
+  --color-negative: var(--negative);
+  --color-neutral-bar: var(--neutral-bar);
+  --color-neutral-soft: var(--neutral-soft);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-line: var(--sidebar-line);
+  --color-sidebar-hover: var(--sidebar-hover);
+  --color-hero: var(--hero);
+  --color-hero-border: var(--hero-border);
+  --color-avatar: var(--avatar);
+  --radius-lg: var(--radius);
+}
+
+:root {
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --background: oklch(0.974 0.004 100);
+  --foreground: oklch(0.275 0.024 167);
+  --card: oklch(1 0 0);
+  --muted-foreground: oklch(0.55 0.012 162);
+  --primary: oklch(0.29 0.049 168);
+  --primary-foreground: oklch(0.99 0.008 125);
+  --border: oklch(0.918 0.008 125);
+  --secondary: oklch(0.961 0.006 140);
+  --accent: oklch(0.88 0.115 116);
+  --positive: oklch(0.48 0.09 157);
+  --positive-soft: oklch(0.937 0.035 146);
+  --negative: oklch(0.69 0.10 29);
+  --neutral-bar: oklch(0.70 0.023 155);
+  --neutral-soft: oklch(0.86 0.019 52);
+  --sidebar: oklch(0.265 0.033 169);
+  --sidebar-foreground: oklch(0.97 0.009 130);
+  --sidebar-muted: oklch(0.72 0.018 161);
+  --sidebar-line: oklch(0.37 0.025 163);
+  --sidebar-hover: oklch(0.30 0.029 165);
+  --hero: oklch(0.952 0.031 115);
+  --hero-border: oklch(0.898 0.039 114);
+  --avatar: oklch(0.876 0.035 58);
+  --radius: 0.75rem;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; }
+@layer base {
+  button, input, textarea, select { font: inherit; }
+}
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+button, a, input, select { -webkit-tap-highlight-color: transparent; }
+:focus-visible { outline: 2px solid var(--positive); outline-offset: 3px; }
+::selection { background: var(--accent); color: var(--primary); }
