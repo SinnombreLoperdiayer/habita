@@ -9,6 +9,7 @@ public static class DependencyInjection
     {
         services.Configure<ProcessingOptions>(config.GetSection(ProcessingOptions.Section));
         services.AddSingleton(TimeProvider.System);
+        services.AddSingleton<RecordingAi>();
         services.AddSingleton<RecordingService>();
         return services;
     }

@@ -1,0 +1,13 @@
+diff a/C:\users\elkinfrodriguezc\documents\01_proyectos\habita\habita\backend-dotnet\src\habita.infrastructure\storage\fileaudiostore.cs b/C:\users\elkinfrodriguezc\documents\01_proyectos\habita\habita\backend-dotnet\src\habita.infrastructure\storage\fileaudiostore.cs	(rejected hunks)
+@@ -27,7 +27,10 @@
+                 throw new InvalidOperationException("Invalid directory path.");
+             Directory.CreateDirectory(directoryPath);
+         }
+-        await using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
++        var canonicalPath = Path.GetFullPath(path);
++        if (!canonicalPath.StartsWith(_root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
++            throw new InvalidOperationException("Invalid file path.");
++        await using var file = new FileStream(canonicalPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+         await file.WriteAsync(data, ct);
+         return key;
+     }

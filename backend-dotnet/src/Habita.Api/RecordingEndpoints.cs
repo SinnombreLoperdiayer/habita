@@ -63,7 +63,7 @@ public static class RecordingEndpoints
 /// <summary>Traduce errores de negocio a ProblemDetails; el frontend muestra el campo "detail".</summary>
 internal sealed class ApiExceptionHandler(IProblemDetailsService problems) : IExceptionHandler
 {
-    public async ValueTask<bool> TryHandleAsync(HttpContext http, Exception exception, CancellationToken cancellationToken)
+    public async ValueTask<bool> TryHandleAsync(HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
     {
         (int Status, string Detail)? mapped = exception switch
         {
@@ -74,10 +74,10 @@ internal sealed class ApiExceptionHandler(IProblemDetailsService problems) : IEx
         };
         if (mapped is not { } m) return false;
 
-        http.Response.StatusCode = m.Status;
+        httpContext.Response.StatusCode = m.Status;
         return await problems.TryWriteAsync(new ProblemDetailsContext
         {
-            HttpContext = http,
+            HttpContext = httpContext,
             Exception = exception,
             ProblemDetails = { Status = m.Status, Detail = m.Detail },
         });

@@ -32,4 +32,7 @@ await app.Services.InitializeHabitaDatabaseAsync();
 await app.RunAsync();
 
 /// <summary>Punto de entrada; parcial para WebApplicationFactory en las pruebas.</summary>
-public static partial class Program;
+public partial class Program
+{
+    protected Program() { }
+}

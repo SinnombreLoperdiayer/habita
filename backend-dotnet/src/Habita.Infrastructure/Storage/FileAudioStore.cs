@@ -17,8 +17,20 @@ internal sealed class FileAudioStore : IAudioStore
     {
         var key = $"{SafeId(recordingId)}/{seq:00000}.{extension}";
         var path = Resolve(key);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+        var directoryPath = Path.GetDirectoryName(path)!;
+        if (!directoryPath.StartsWith(_root, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Invalid directory path.");
+        if (!Directory.Exists(directoryPath))
+        {
+            var canonicalDirectoryPath = Path.GetFullPath(directoryPath);
+            if (!canonicalDirectoryPath.StartsWith(_root, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Invalid directory path.");
+            Directory.CreateDirectory(directoryPath);
+        }
+        var canonicalPath = Path.GetFullPath(path);
+        if (!canonicalPath.StartsWith(_root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Invalid file path.");
+        await using var file = new FileStream(canonicalPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true);
         await file.WriteAsync(data, ct);
         return key;
     }

@@ -9,7 +9,9 @@ type Meeting = { id: number; title: string; date: string; time: string; venue: s
 type Result = { kind: 'ok' | 'dup' | 'bad'; owner?: Owner; via?: Via; msg?: string };
 type Tab = 'puesto' | 'preregistro' | 'indicadores';
 
-const timeOf = (ms: number) => new Date(ms).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const escapeHtml = (value: unknown) => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+const safeDataImage = (url: string) => (/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(url) ? url : '');
+const timeOf = (ms: number) =>
 const card = 'rounded-2xl border border-border bg-card';
 const btn = 'inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-opacity hover:opacity-85 disabled:opacity-40';
 const btnPrimary = `${btn} bg-primary text-primary-foreground`;
@@ -209,10 +211,10 @@ export default function Checkin({ owners, meeting, community, onSetPresent, noti
 
   const printCards = () => {
     const pending = owners.filter(o => !o.present);
-    const cards = pending.map(o => `<div class="c"><img src="${qrPng(payloadOf(meeting.id, o.id, records[o.id].token), 240)}"/><b>${o.name}</b><span>${o.unit}</span><small>${records[o.id].token}</small></div>`).join('');
+    const cards = pending.map(o => `<div class="c"><img src="${escapeHtml(safeDataImage(qrPng(payloadOf(meeting.id, o.id, records[o.id].token), 240)))}"/><b>${escapeHtml(o.name)}</b><span>${escapeHtml(o.unit)}</span><small>${escapeHtml(records[o.id].token)}</small></div>`).join('');
     const w = window.open('', '_blank');
     if (!w) { notify('El navegador bloqueó la ventana de impresión.'); return; }
-    w.document.write(`<title>Pases · ${meeting.title}</title><style>body{font-family:system-ui;margin:16px}h1{font-size:14px}.g{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.c{border:1px dashed #999;border-radius:8px;padding:8px;text-align:center;break-inside:avoid;font-size:11px}.c img{width:100%}.c b,.c span,.c small{display:block}</style><h1>${community} · ${meeting.title}</h1><div class="g">${cards}</div>`);
+    w.document.write(`<title>Pases · ${escapeHtml(meeting.title)}</title><style>body{font-family:system-ui;margin:16px}h1{font-size:14px}.g{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.c{border:1px dashed #999;border-radius:8px;padding:8px;text-align:center;break-inside:avoid;font-size:11px}.c img{width:100%}.c b,.c span,.c small{display:block}</style><h1>${escapeHtml(community)} · ${escapeHtml(meeting.title)}</h1><div class="g">${cards}</div>`);
     w.document.close();
     w.focus();
     setTimeout(() => w.print(), 400);

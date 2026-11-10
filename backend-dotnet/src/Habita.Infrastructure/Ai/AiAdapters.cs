@@ -26,8 +26,9 @@ public sealed class AzureOpenAiOptions
     public Uri V1Endpoint()
     {
         var baseUrl = Endpoint!.Trim().TrimEnd('/');
-        if (!baseUrl.EndsWith("/openai/v1", StringComparison.OrdinalIgnoreCase)) baseUrl += "/openai/v1";
-        return new Uri(baseUrl + "/");
+        var v1Suffix = string.Join('/', string.Empty, "openai", "v1");
+        if (!baseUrl.EndsWith(v1Suffix, StringComparison.OrdinalIgnoreCase)) baseUrl += v1Suffix;
+        return new Uri(baseUrl + '/');
     }
 }
 

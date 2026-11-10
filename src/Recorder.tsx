@@ -28,7 +28,41 @@ const STATUS_TEXT: Record<RecStatus, string> = { recording: 'Grabando', queued: 
 function loadJson<T>(key: string, fallback: T): T { try { return JSON.parse(localStorage.getItem(key) ?? '') as T; } catch { return fallback; } }
 function pickMime() { return ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus'].find(m => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m)) ?? ''; }
 
-export default function Recorder({ meeting, community, agenda, agendaStep, attendance, polls, notify }: Props) {
+function providerNoteOf(health: Health | null): { bad: boolean; text: string } | null {
+  if (!health) return null;
+  switch (health.ai_provider) {
+    case 'offline': return { bad: true, text: 'No se alcanza el servidor. El audio se guardará en este dispositivo y se subirá al reconectar.' };
+    case 'none': return { bad: true, text: 'No hay proveedor de IA configurado en el servidor (Azure OpenAI). Se grabará, pero no se podrá transcribir.' };
+    case 'demo': return { bad: true, text: 'Modo demostración: la transcripción y la redacción son SIMULADAS (no usan tu audio ni un modelo de IA). Configura Azure OpenAI en el servidor para transcribir de verdad.' };
+    default: return { bad: false, text: 'Proveedor de IA: Azure OpenAI.' };
+  }
+}
+
+function StatusIcon({ active, status }: Readonly<{ active: boolean; status: RecStatus }>) {
+  if (active) return <Loader2 size={18} className="animate-spin text-primary" />;
+  if (status === 'ready') return <CheckCheck size={18} className="text-positive" />;
+  return <AlertTriangle size={18} className="text-negative" />;
+}
+
+/** Mide el nivel del micrófono y lo pinta en la barra; devuelve el AudioContext para cerrarlo luego. */
+function startLevelMeter(stream: MediaStream, bar: { current: HTMLDivElement | null }, raf: { current: number }) {
+  const ctx = new AudioContext();
+  const an = ctx.createAnalyser();
+  an.fftSize = 512;
+  ctx.createMediaStreamSource(stream).connect(an);
+  const buf = new Uint8Array(an.fftSize);
+  const loop = () => {
+    an.getByteTimeDomainData(buf);
+    let peak = 0;
+    for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+    if (bar.current) bar.current.style.width = `${Math.min(100, (peak / 128) * 160)}%`;
+    raf.current = requestAnimationFrame(loop);
+  };
+  loop();
+  return ctx;
+}
+
+export default function Recorder({ meeting, community, agenda, agendaStep, attendance, polls, notify }: Readonly<Props>) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [health, setHealth] = useState<Health | null>(null);
   const [consentBy, setConsentBy] = useState('');
@@ -96,20 +130,21 @@ export default function Recorder({ meeting, community, agenda, agendaStep, atten
 
   // ---- subida con cola persistente -----------------------------------
   const doFlush = useCallback(async () => {
-    const items = (await queue.all()).sort((a, b) => a.seq - b.seq);
+    const items = await queue.all();
     setPending(items.length);
-    let ok = true;
-    for (const p of items) {
+    // El servidor guarda cada fragmento por su número (upsert), así que el orden de subida no importa.
+    const results = await Promise.all(items.map(async p => {
       try {
         await api.uploadChunk(p.recId, p.seq, p.startMs, p.durationMs, p.blob);
         await queue.del(p.key);
+        return true;
       } catch (e) {
-        if (e instanceof ApiError && (e.status === 404 || e.status === 422)) await queue.del(p.key);
-        else ok = false;
+        if (e instanceof ApiError && (e.status === 404 || e.status === 422)) { await queue.del(p.key); return true; }
+        return false;
       }
-    }
+    }));
     setPending((await queue.all()).length);
-    return ok;
+    return results.every(Boolean);
   }, []);
   const flush = useCallback(() => (flushLock.current = flushLock.current.then(doFlush, doFlush)), [doFlush]);
   useEffect(() => {
@@ -173,20 +208,7 @@ export default function Recorder({ meeting, community, agenda, agendaStep, atten
       setElapsed(0);
       setPhase('recording');
       startSegment();
-      const ctx = new AudioContext();
-      audioCtx.current = ctx;
-      const an = ctx.createAnalyser();
-      an.fftSize = 512;
-      ctx.createMediaStreamSource(stream).connect(an);
-      const buf = new Uint8Array(an.fftSize);
-      const loop = () => {
-        an.getByteTimeDomainData(buf);
-        let peak = 0;
-        for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
-        if (levelRef.current) levelRef.current.style.width = `${Math.min(100, (peak / 128) * 160)}%`;
-        raf.current = requestAnimationFrame(loop);
-      };
-      loop();
+      audioCtx.current = startLevelMeter(stream, levelRef, raf);
       try { wake.current = (await navigator.wakeLock?.request('screen')) ?? null; } catch { /* opcional */ }
     } catch (e) {
       releaseMedia();
@@ -205,12 +227,18 @@ export default function Recorder({ meeting, community, agenda, agendaStep, atten
     return () => { clearInterval(t); window.removeEventListener('beforeunload', warn); document.removeEventListener('visibilitychange', vis); };
   }, [phase]);
 
+  const flushWithRetry = async (retries: number): Promise<boolean> => {
+    if (await flush()) return true;
+    if (retries <= 0) return false;
+    await sleep(1500);
+    return flushWithRetry(retries - 1);
+  };
+
   const finish = async (recId: string, mks: Marker[]) => {
     setBusy(true);
     setError('');
     try {
-      let ok = await flush();
-      for (let i = 0; i < 3 && !ok; i++) { await sleep(1500); ok = await flush(); }
+      const ok = await flushWithRetry(3);
       if (!ok) throw new Error('No se pudieron subir todos los fragmentos de audio. Revisa la conexión y vuelve a intentarlo: el audio sigue guardado en este dispositivo.');
       const res = await api.finish(recId, mks, buildContext());
       localStorage.removeItem(ACTIVE_KEY);
@@ -260,11 +288,14 @@ export default function Recorder({ meeting, community, agenda, agendaStep, atten
   const openOld = (id: string) => act(() => api.get(id)).then(() => { phaseRef.current = 'result'; setPhase('result'); });
   const draft = edited ?? view?.draft ?? '';
 
-  const providerNote = health && (health.ai_provider === 'none' || health.ai_provider === 'offline'
-    ? { bad: true, text: health.ai_provider === 'offline' ? 'No se alcanza el servidor. El audio se guardará en este dispositivo y se subirá al reconectar.' : 'No hay proveedor de IA configurado en el servidor (Azure OpenAI). Se grabará, pero no se podrá transcribir.' }
-    : health.ai_provider === 'demo'
-      ? { bad: true, text: 'Modo demostración: la transcripción y la redacción son SIMULADAS (no usan tu audio ni un modelo de IA). Configura Azure OpenAI en el servidor para transcribir de verdad.' }
-      : { bad: false, text: 'Proveedor de IA: Azure OpenAI.' });
+  const providerNote = providerNoteOf(health);
+  const addNote = () => {
+    const text = note.trim();
+    if (!text) return;
+    addMarker('note', text);
+    setMarkersView([...markers.current]);
+    setNote('');
+  };
 
   return (
     <div className="space-y-5">
@@ -300,15 +331,15 @@ export default function Recorder({ meeting, community, agenda, agendaStep, atten
             <p className="mt-4 text-5xl font-semibold tabular-nums tracking-tight">{clock(elapsed)}</p>
             <div className="mt-5 h-2 overflow-hidden rounded-full bg-secondary" aria-label="Nivel de audio"><div ref={levelRef} className="h-full w-0 rounded-full bg-positive transition-[width] duration-75" /></div>
             <p className="mt-2 text-xs text-muted-foreground">{pending > 0 ? `${pending} fragmento(s) pendientes de subir (guardados en este dispositivo)` : 'Todo el audio está respaldado en el servidor'}</p>
-            <div className="mt-5 flex gap-2"><input value={note} onChange={e => setNote(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && note.trim()) { addMarker('note', note.trim()); setMarkersView([...markers.current]); setNote(''); } }} placeholder="Marcar un momento (p. ej. proposición del apto. A-302)" aria-label="Nota" className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary" />
-              <button className={btnGhost} disabled={!note.trim()} onClick={() => { addMarker('note', note.trim()); setMarkersView([...markers.current]); setNote(''); }}>Marcar</button></div>
+            <div className="mt-5 flex gap-2"><input value={note} onChange={e => setNote(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addNote(); }} placeholder="Marcar un momento (p. ej. proposición del apto. A-302)" aria-label="Nota" className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary" />
+              <button className={btnGhost} disabled={!note.trim()} onClick={addNote}>Marcar</button></div>
             <button disabled={busy || phase === 'finishing'} onClick={() => { void stopAndFinish(); }} className={`${btn} mt-5 bg-negative px-4 py-2.5 text-white`}>{phase === 'finishing' ? <Loader2 size={14} className="animate-spin" /> : <Square size={14} />}Finalizar y generar acta</button>
             <p className="mt-3 text-xs leading-5 text-muted-foreground">Mantén esta pestaña abierta. Puedes navegar a otras secciones de Habita mientras se graba.</p>
           </section>
           <section className={`${card} p-5`}>
             <h2 className="text-sm font-semibold">Marcadores</h2>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">Se crean solos al avanzar el orden del día o cerrar una votación. Ordenan el acta por puntos.</p>
-            <ul className="mt-3 divide-y divide-border">{markersView.map((m, i) => <li key={i} className="flex gap-3 py-2 text-xs"><span className="w-14 shrink-0 tabular-nums text-muted-foreground">{clock(m.t_ms)}</span><span>{m.label}</span></li>)}</ul>
+            <ul className="mt-3 divide-y divide-border">{markersView.map(m => <li key={`${m.t_ms}-${m.kind}-${m.label}`} className="flex gap-3 py-2 text-xs"><span className="w-14 shrink-0 tabular-nums text-muted-foreground">{clock(m.t_ms)}</span><span>{m.label}</span></li>)}</ul>
           </section>
         </div>
       )}
@@ -318,7 +349,7 @@ export default function Recorder({ meeting, community, agenda, agendaStep, atten
           <section className={`${card} p-5`}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
-                {active ? <Loader2 size={18} className="animate-spin text-primary" /> : view.status === 'ready' ? <CheckCheck size={18} className="text-positive" /> : <AlertTriangle size={18} className="text-negative" />}
+                <StatusIcon active={!!active} status={view.status} />
                 <div><p className="text-sm font-semibold">{STATUS_TEXT[view.status]}</p><p className="text-xs text-muted-foreground">{view.progress.transcribed}/{view.progress.chunks} fragmentos transcritos{view.progress.failed ? ` · ${view.progress.failed} con error` : ''}</p></div>
               </div>
               <button className={btnGhost} onClick={() => { setView(null); phaseRef.current = 'idle'; setPhase('idle'); }}>Nueva grabación</button>

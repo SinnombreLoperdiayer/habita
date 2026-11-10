@@ -17,12 +17,14 @@ public sealed class ProcessingOptions
     public TimeSpan RetryBaseDelay { get; set; } = TimeSpan.FromSeconds(1);
 }
 
+/// <summary>Proveedores de IA que usa el procesamiento: transcripción y redacción.</summary>
+public sealed record RecordingAi(ITranscriber Transcriber, ITextGenerator Generator);
+
 /// <summary>Casos de uso de grabación. No conoce OpenAI, SQL Server ni ASP.NET Core.</summary>
 public sealed class RecordingService(
     IRecordingRepository repo,
     IAudioStore audio,
-    ITranscriber transcriber,
-    ITextGenerator generator,
+    RecordingAi ai,
     IJobQueue queue,
     TimeProvider clock,
     IOptions<ProcessingOptions> options,
@@ -122,13 +124,13 @@ public sealed class RecordingService(
                     try
                     {
                         var data = await audio.ReadAsync(c.AudioKey, ct);
-                        c.MarkTranscribed(await transcriber.TranscribeAsync(data, fileName, c.Mime, prompt, ct));
+                        c.MarkTranscribed(await ai.Transcriber.TranscribeAsync(data, fileName, c.Mime, prompt, ct));
                         break;
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
                     {
                         lastError = ex.Message;
-                        log.LogWarning("Intento {Attempt} fallido transcribiendo {File}: {Error}", attempt + 1, fileName, ex.Message);
+                        log.LogWarning(ex, "Intento {Attempt} fallido transcribiendo {File}", attempt + 1, fileName);
                         if (attempt + 1 < _opt.TranscriptionAttempts)
                             await Task.Delay(_opt.RetryBaseDelay * Math.Pow(2, attempt), clock, ct);
                     }
@@ -154,7 +156,7 @@ public sealed class RecordingService(
             await gate.WaitAsync(ct);
             try
             {
-                return (await generator.GenerateAsync(ActaDrafting.SectionSystemPrompt, ActaDrafting.SectionUserPrompt(s), ct)).Trim();
+                return (await ai.Generator.GenerateAsync(ActaDrafting.SectionSystemPrompt, ActaDrafting.SectionUserPrompt(s), ct)).Trim();
             }
             finally
             {
@@ -198,7 +200,7 @@ public sealed class RecordingService(
 
     public Task<IReadOnlyList<Chunk>> ChunksAsync(string recordingId, CancellationToken ct = default) => repo.GetChunksAsync(recordingId, ct);
 
-    public string ProviderName => transcriber.Name;
+    public string ProviderName => ai.Transcriber.Name;
 
     private async Task<Recording> GetAsync(string id, CancellationToken ct) =>
         await repo.GetAsync(id, ct) ?? throw new RecordingNotFoundException(id);
