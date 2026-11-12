@@ -9,6 +9,7 @@ Sistema web, en español, para sesiones de asamblea de copropietarios en Colombi
 | Espacio de trabajo (`src/App.tsx`) | Hecho | Comunidad, propietarios, reuniones, votaciones, orden del día, documentos. Persistido en localStorage `habita-workspace-v1`. |
 | Registro de asistencia (`src/Checkin.tsx`, `src/lib/checkin.ts`) | Hecho | Preregistro con QR, puesto de registro con cámara, indicadores. |
 | Grabación y acta (`src/Recorder.tsx`, `src/lib/recorderApi.ts`, `backend-dotnet/`) | Prototipo en .NET 10 | Graba en segmentos, sube, transcribe y genera borrador de acta. |
+| Login y roles | En diseño | Ver Pendientes (sección 8). |
 
 ### 1.1 Registro de asistencia
 - Pestañas: Puesto de registro, Preregistro y pases, Indicadores.
@@ -16,19 +17,23 @@ Sistema web, en español, para sesiones de asamblea de copropietarios en Colombi
 - Pase por enlace: `#pase=<base64url JSON>`; `main.tsx` muestra `PassView` si el hash existe.
 - Lectura: `BarcodeDetector` si existe, si no `jsqr`. Generación: `qrcode-generator`.
 - Registros por reunión en localStorage `habita-checkin-v1-<meetingId>`: `{ [ownerId]: { token, pre?, at?, via? } }`. El `token` es un secreto aleatorio por propietario que impide falsificar un QR.
+- La impresión de pases escapa el HTML (`escapeHtml`, `safeDataImage`) porque se escribe con `document.write`.
 - Limitación: los datos son por navegador (sin sincronización entre puestos).
 
 ### 1.2 Grabación, transcripción y acta
 Flujo: consentimiento → grabar → subir segmentos → finalizar → transcribir → redactar → revisar y editar.
 
 - Cliente: MediaRecorder con segmentos independientes de 60 s (el siguiente arranca antes de detener el anterior), cola persistente en IndexedDB (`habita-audio-v1`), Wake Lock, aviso `beforeunload`, recuperación de grabación interrumpida (`habita-rec-active`), marcadores automáticos (cambio de punto del orden del día, votación cerrada).
+- La cola sube los fragmentos pendientes en paralelo. El servidor guarda cada fragmento por su número y lo reemplaza si llega de nuevo (por eso `FileAudioStore` usa `FileMode.Create`, no `CreateNew`).
+- `recorderApi.ts` valida el id de grabación y los parámetros numéricos antes de armar la URL.
 - Backend: transcripción por segmento (concurrencia 3, 3 reintentos con espera creciente). Las secciones se asignan por marcadores, usando el punto medio de cada segmento. Cada sección se redacta con el LLM (concurrencia 4) con un prompt estricto: sin invenciones, `[POR CONFIRMAR]`, citas `[hh:mm:ss]`. Encabezado, quórum y tabla de votos se generan de forma determinista (`ActaDrafting.RenderActa`).
 
 ## 2. Stack
 
-**Frontend:** React 19, TypeScript 6, Vite 8, Tailwind 4, lucide-react, eslint 10 (react-hooks 7). `node_modules` está instalado para Windows.
-**Backend (`backend-dotnet/`, el vigente):** .NET 10 LTS, ASP.NET Core Minimal APIs, EF Core 10 sobre SQL Server (LocalDB en desarrollo, Azure SQL en producción), SDK oficial `OpenAI` 2.15 contra la API v1 de Azure OpenAI, `BackgroundService` + `Channel` como cola, xUnit.
-**Backend anterior (`backend/`, FastAPI):** prototipo original en Python. Se conserva como referencia hasta retirarlo; ya no es el que usa el frontend.
+**Frontend:** React 19, TypeScript 6, Vite 8, Tailwind 4, lucide-react, eslint 10 (react-hooks 7). `node_modules` no está en git: se instala con `npm ci` a partir de `package-lock.json`.
+**Backend (`backend-dotnet/`):** .NET 10 LTS, ASP.NET Core Minimal APIs, EF Core 10 sobre SQL Server (LocalDB en desarrollo, Azure SQL en producción), SDK oficial `OpenAI` 2.15 contra la API v1 de Azure OpenAI, `BackgroundService` + `Channel` como cola, Swagger UI (Swashbuckle) sobre el OpenAPI nativo, xUnit.
+
+El prototipo original en FastAPI (`backend/`) y su lanzador `start.sh` se eliminaron; siguen en el historial de git (antes del commit `70a0371`).
 
 ### Arquitectura hexagonal del backend .NET
 ```
@@ -37,19 +42,21 @@ backend-dotnet/
   nuget.config (solo nuget.org) · dotnet-tools.json (dotnet-ef)
   src/Habita.Domain/          Recording, Chunk, Marker, MeetingContext, DomainException. Sin dependencias.
   src/Habita.Application/     Ports.cs (IRecordingRepository, IAudioStore, ITranscriber, ITextGenerator, IJobQueue)
-                              RecordingService (casos de uso y procesamiento), ActaDrafting (secciones, prompts, plantilla del acta)
+                              RecordingService (casos de uso y procesamiento), RecordingAi (agrupa transcriptor y redactor)
+                              ActaDrafting (secciones, prompts, plantilla del acta)
   src/Habita.Infrastructure/  Persistence/ (HabitaDbContext, EfRecordingRepository, Migrations/)
                               Storage/FileAudioStore · Ai/ (AzureOpenAiAdapter, DemoAiAdapter, UnconfiguredAiAdapter)
                               Queue/ (ChannelJobQueue, RecordingWorker) · DependencyInjection.cs
   src/Habita.Api/             Program.cs, RecordingEndpoints.cs (rutas + ApiExceptionHandler), Contracts.cs (DTO snake_case)
-  tests/Habita.Tests/         22 pruebas: flujo HTTP con SQLite e IA falsa, adaptador Azure contra servidor falso, dominio
+  tests/Habita.Tests/         23 casos: flujo HTTP con SQLite e IA falsa, adaptador Azure contra servidor falso, dominio
 ```
 
 Detalles:
-- El contrato HTTP es idéntico al de FastAPI (JSON snake_case, mismos códigos), así que el frontend no cambió.
+- Contrato HTTP en JSON snake_case, el que espera `src/lib/recorderApi.ts`.
 - Los errores salen como ProblemDetails con `detail`: 422 regla de negocio, 404 no encontrada, 400 formato inválido.
 - Tablas `Recordings` y `Chunks` (FK con borrado en cascada). `Markers` y `Context` se guardan como JSON en `nvarchar(max)`, consultables con `JSON_VALUE`.
 - El repositorio crea un `DbContext` corto por operación (`IDbContextFactory`), así que el worker puede escribir en paralelo.
+- `Program` es `public partial class` con constructor `protected`; no puede ser `static` porque las pruebas usan `WebApplicationFactory<Program>`.
 
 ### API
 - `GET /api/health`
@@ -89,13 +96,21 @@ Correspondencia del prototipo con producción:
 | `FileAudioStore` (disco) | Blob Storage (nuevo adaptador de `IAudioStore`) |
 | `ChannelJobQueue` + `RecordingWorker` en proceso | Service Bus + worker separado (nuevo adaptador de `IJobQueue`) |
 | Clave de API de Azure OpenAI | Identidad administrada (`AuthenticationPolicy` del SDK) |
-| Sin autenticación | Entra ID (JWT) |
+| Sin autenticación | Entra ID (JWT) con roles (en diseño) |
 
 ## 4. Marco legal
 - Ley 1581 de 2012: la voz es dato personal, así que se requiere consentimiento informado y política de retención. El audio se puede borrar desde la interfaz.
 - Ley 675 de 2001: el quórum y las mayorías se calculan por coeficientes de copropiedad. **No implementado:** hoy se cuentan unidades.
 
-## 5. Ejecución local (Windows)
+## 5. Seguridad
+- El código se escanea con **Veracode** (remediaciones en el commit `5d22386`). Algunos patrones existen para satisfacer el escáner y no deben "simplificarse":
+  - `AzureOpenAiOptions.V1Endpoint()` arma `/openai/v1` con `string.Join`.
+  - `FileAudioStore.SaveAsync` valida varias veces que la ruta no salga de la carpeta raíz.
+  - `RecordingAi` reduce los parámetros del constructor de `RecordingService`.
+- Al aplicar una remediación, comprueba que no cambie el comportamiento y corre `dotnet test`.
+- `.github/agents/security-reviewer.agent.md` define un agente revisor de seguridad (solo lectura).
+
+## 6. Ejecución local (Windows)
 
 Requisitos: SDK de .NET 10, SQL Server LocalDB (incluido con Visual Studio o SQL Server Express) y Node 20+.
 
@@ -106,9 +121,11 @@ dotnet run --project src/Habita.Api                          # sin Azure: provee
 dotnet run --project src/Habita.Api -- --Ai:Provider=demo    # modo demostración
 
 # Terminal 2 — frontend en http://localhost:5173 (el proxy /api apunta al puerto 8100)
-npm install
+npm ci
 npm run dev
 ```
+
+- Swagger UI (solo en Development): `http://localhost:8100/swagger`. Con el perfil `http` de `launchSettings.json` se abre solo. El documento OpenAPI está en `http://localhost:8100/openapi/v1.json`.
 
 Azure OpenAI (secretos fuera del repositorio, con user-secrets):
 ```powershell
@@ -122,16 +139,17 @@ Comprueba con `curl http://localhost:8100/api/health`, que debe responder `"ai_p
 
 - Base de datos: `Server=(localdb)\MSSQLLocalDB;Database=Habita` (ábrela con SSMS). En Development las migraciones se aplican al arrancar (`Database:Initialize=Migrate`). En producción se aplica un script idempotente: `dotnet dotnet-ef migrations script --idempotent --project src/Habita.Infrastructure --startup-project src/Habita.Api`.
 - Nueva migración: `dotnet dotnet-ef migrations add <Nombre> --project src/Habita.Infrastructure --startup-project src/Habita.Api --output-dir Persistence/Migrations -- --environment Development`.
-- Audio local: `backend-dotnet/src/Habita.Api/data/audio/`.
+- Audio local: `backend-dotnet/src/Habita.Api/data/audio/` (excluido de git).
 - Sin SQL Server (Linux o Mac): `--Database:Provider=Sqlite --ConnectionStrings:Habita="Data Source=habita.db" --Database:Initialize=EnsureCreated`.
-- OpenAPI en Development: `http://localhost:8100/openapi/v1.json`.
 
 Pruebas del backend: `cd backend-dotnet && dotnet test`.
 Comprobaciones del frontend: `npx tsc -p tsconfig.app.json --noEmit`, `npm run lint`, `npm run build`.
 
-Nota: `start.sh` es el lanzador del antiguo entorno Workshop (FastAPI) y no sirve en local. El micrófono y la cámara requieren `localhost` o HTTPS.
+El micrófono y la cámara requieren `localhost` o HTTPS.
 
-## 6. Limitaciones conocidas
+Finales de línea: `.gitattributes` (`* text=auto`) hace que git guarde LF; cada sistema usa los suyos al hacer checkout.
+
+## 7. Limitaciones conocidas
 - La transcripción real con Azure no está verificada: faltan credenciales y solo se probó contra un servidor Azure falso (rutas v1, credencial y parámetros).
 - No hay autenticación en la API.
 - Sin diarización (identificación de hablantes).
@@ -140,12 +158,11 @@ Nota: `start.sh` es el lanzador del antiguo entorno Workshop (FastAPI) y no sirv
 - Los datos de registro están en localStorage de cada navegador.
 - Los flujos de micrófono y cámara no se probaron en un navegador real.
 
-## 7. Pendientes
-1. Probar con Azure OpenAI real.
-2. Autenticación (Entra ID o clave de API).
+## 8. Pendientes
+1. Login con roles (en diseño).
+2. Probar con Azure OpenAI real.
 3. Módulo de poderes y coeficientes (Ley 675).
 4. Sincronización entre varios puestos de registro.
 5. Regeneración de tokens de check-in faltantes.
-6. Completar la arquitectura de producción en .NET (sección 3): Blob Storage, Service Bus con worker separado, Entra ID, Key Vault. El backend ya está en .NET 10.
+6. Completar la arquitectura de producción en .NET (sección 3): Blob Storage, Service Bus con worker separado, Entra ID, Key Vault.
 7. Configuración de publicación.
-8. Retirar el backend FastAPI (`backend/`) y `start.sh`.

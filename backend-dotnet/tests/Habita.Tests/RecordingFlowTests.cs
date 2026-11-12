@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 
 namespace Habita.Tests;
 
-/// <summary>Flujo HTTP completo, equivalente a backend/tests/test_flow.py del prototipo.</summary>
+/// <summary>Flujo HTTP completo de grabación, transcripción y borrador del acta.</summary>
 public sealed class RecordingFlowTests
 {
     private static async Task<string> StartAsync(HttpClient c)
@@ -25,9 +25,9 @@ public sealed class RecordingFlowTests
         return (await r.Content.ReadFromJsonAsync<JsonObject>())!["id"]!.GetValue<string>();
     }
 
-    private static async Task<HttpResponseMessage> UploadAsync(HttpClient c, string id, int seq, string query = "", string mime = "audio/webm")
+    private static async Task<HttpResponseMessage> UploadAsync(HttpClient c, string id, int seq, string query = "", string mime = "audio/webm", byte[]? body = null)
     {
-        var content = new ByteArrayContent("abc"u8.ToArray());
+        var content = new ByteArrayContent(body ?? "abc"u8.ToArray());
         content.Headers.ContentType = MediaTypeHeaderValue.Parse(mime);
         return await c.PutAsync($"/api/recordings/{id}/chunks/{seq}{query}", content);
     }
@@ -101,6 +101,23 @@ public sealed class RecordingFlowTests
         Assert.DoesNotContain("-1.webm", a, StringComparison.Ordinal); // punto medio del fragmento 0 = 30 s
         Assert.Contains("-1.webm", b, StringComparison.Ordinal);       // punto medio del fragmento 1 = 90 s: ya es B
         Assert.Contains("-2.webm", b, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Re_uploading_a_chunk_replaces_it()
+    {
+        // Pasa cuando el servidor guardó el fragmento pero la respuesta no llegó y el navegador lo reenvía.
+        using var app = new HabitaApiFactory(new FakeAi());
+        var c = app.CreateClient();
+        var id = await StartAsync(c);
+        Assert.Equal(HttpStatusCode.NoContent, (await UploadAsync(c, id, 0, "?start_ms=0&duration_ms=60000")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await UploadAsync(c, id, 0, "?start_ms=0&duration_ms=60000", body: "abcdef"u8.ToArray())).StatusCode);
+
+        await FinishAsync(c, id);
+        var j = await WaitDoneAsync(c, id);
+
+        Assert.Equal("ready", j["status"]!.GetValue<string>());
+        Assert.Equal(1, j["progress"]!["chunks"]!.GetValue<int>());
     }
 
     [Fact]

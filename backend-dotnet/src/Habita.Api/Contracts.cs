@@ -4,7 +4,7 @@ using Habita.Domain;
 
 namespace Habita.Api;
 
-// Contrato HTTP. Es el mismo que tenía el prototipo FastAPI (JSON en snake_case), así que el frontend no cambia.
+// Contrato HTTP: JSON en snake_case, el mismo que espera el frontend (src/lib/recorderApi.ts).
 
 public sealed record StartRecordingRequest(int MeetingId, string Title, string Community, string ConsentBy, MeetingContext? Context = null);
 

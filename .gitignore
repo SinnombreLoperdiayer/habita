@@ -16,5 +16,3 @@ coverage/
 Thumbs.db
 .vs/
 
-# Restos del antiguo entorno Workshop (start.sh)
-.workshop-arena-install.lock

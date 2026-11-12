@@ -11,7 +11,7 @@ type Tab = 'puesto' | 'preregistro' | 'indicadores';
 
 const escapeHtml = (value: unknown) => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 const safeDataImage = (url: string) => (/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(url) ? url : '');
-const timeOf = (ms: number) =>
+const timeOf = (ms: number) => new Date(ms).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const card = 'rounded-2xl border border-border bg-card';
 const btn = 'inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-opacity hover:opacity-85 disabled:opacity-40';
 const btnPrimary = `${btn} bg-primary text-primary-foreground`;
