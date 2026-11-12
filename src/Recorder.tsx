@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCheck, Copy, Download, FileText, Loader2, Mic, RefreshCw, Square, Trash2 } from 'lucide-react';
 import { downloadUrl } from '@/lib/checkin';
 import { ApiError, api, queue } from '@/lib/recorderApi';
-import type { Health, Marker, RecStatus, RecView } from '@/lib/recorderApi';
+import type { Health, Marker, Me, RecStatus, RecView } from '@/lib/recorderApi';
 
 type Meeting = { id: number; title: string; date: string; time: string; venue: string };
 type Poll = { id: number; title: string; yes: number; no: number; abstain: number; closed: boolean };
@@ -62,9 +62,18 @@ function startLevelMeter(stream: MediaStream, bar: { current: HTMLDivElement | n
   return ctx;
 }
 
+/** Comunidad donde la persona puede grabar (rol de administración); prefiere la que tiene el mismo nombre que la del espacio de trabajo. */
+function recordingCommunityOf(me: Me, communityName: string) {
+  const allowed = me.memberships.filter(m => m.roles.includes('administrator'));
+  const m = allowed.find(x => x.community_name === communityName) ?? allowed[0];
+  return m ? { id: m.community_id, name: m.community_name } : null;
+}
+
 export default function Recorder({ meeting, community, agenda, agendaStep, attendance, polls, notify }: Readonly<Props>) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [health, setHealth] = useState<Health | null>(null);
+  // undefined: consultando; null: sin comunidad donde grabar.
+  const [recCommunity, setRecCommunity] = useState<{ id: string; name: string } | null | undefined>(undefined);
   const [consentBy, setConsentBy] = useState('');
   const [consentOk, setConsentOk] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -115,6 +124,7 @@ export default function Recorder({ meeting, community, agenda, agendaStep, atten
   }, []);
 
   useEffect(() => { api.health().then(setHealth).catch(() => setHealth({ ok: false, ai_provider: 'offline' })); }, []);
+  useEffect(() => { api.me().then(me => setRecCommunity(recordingCommunityOf(me, community))).catch(() => setRecCommunity(null)); }, [community]);
 
   // Marcadores automáticos: cambio de punto del orden del día y cierre de votaciones.
   useEffect(() => {
@@ -191,10 +201,11 @@ export default function Recorder({ meeting, community, agenda, agendaStep, atten
   const start = async () => {
     setError('');
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') { setError('Este navegador no permite grabar audio.'); return; }
+    if (!recCommunity) { setError('Tu cuenta no tiene el rol de administración en ninguna comunidad, así que no puedes grabar.'); return; }
     setBusy(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-      const rec = await api.start({ meeting_id: meeting.id, title: meeting.title, community, consent_by: consentBy, context: buildContext() });
+      const rec = await api.start({ community_id: recCommunity.id, meeting_id: meeting.id, title: meeting.title, consent_by: consentBy, context: buildContext() });
       streamRef.current = stream;
       recIdRef.current = rec.id;
       t0.current = Date.now();
@@ -311,8 +322,9 @@ export default function Recorder({ meeting, community, agenda, agendaStep, atten
               <input value={consentBy} onChange={e => setConsentBy(e.target.value)} placeholder="Nombre completo" className="w-full rounded-xl border border-border bg-background px-3 py-2.5 text-sm outline-none focus:border-primary" /></label>
             <label className="mt-4 flex items-start gap-2.5 text-xs leading-5"><input type="checkbox" checked={consentOk} onChange={e => setConsentOk(e.target.checked)} className="mt-1" />
               <span>Se informó a los asistentes que la sesión será grabada para elaborar el acta, y la asamblea autoriza la grabación y el tratamiento de la voz como dato personal (Ley 1581 de 2012).</span></label>
-            <button disabled={busy || !consentOk || consentBy.trim().length < 3} onClick={() => { void start(); }} className={`${btnPrimary} mt-5 px-4 py-2.5`}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}Iniciar grabación</button>
-            <p className="mt-3 text-xs text-muted-foreground">Asamblea: {meeting.title}</p>
+            <button disabled={busy || !recCommunity || !consentOk || consentBy.trim().length < 3} onClick={() => { void start(); }} className={`${btnPrimary} mt-5 px-4 py-2.5`}>{busy ? <Loader2 size={14} className="animate-spin" /> : <Mic size={14} />}Iniciar grabación</button>
+            <p className="mt-3 text-xs text-muted-foreground">Asamblea: {meeting.title}{recCommunity ? ` · Comunidad: ${recCommunity.name}` : ''}</p>
+            {recCommunity === null && <p role="alert" className="mt-2 text-xs leading-5 text-negative">No puedes grabar: tu cuenta no tiene el rol de administración en ninguna comunidad, o no se pudo consultar tu sesión.</p>}
           </section>
           <section className={`${card} p-5`}>
             {interrupted && <div className="mb-5 rounded-xl border border-border bg-hero p-3 text-xs leading-5"><p className="font-medium">Se detectó una grabación interrumpida</p><p className="mt-1 text-muted-foreground">Sube el audio pendiente y genera el borrador con lo que se alcanzó a grabar.</p><button disabled={busy} className={`${btnPrimary} mt-3`} onClick={() => { void finish(interrupted.id, interrupted.markers); }}>{busy && <Loader2 size={13} className="animate-spin" />}Recuperar y procesar</button></div>}

@@ -6,6 +6,9 @@ export type RecView = {
   transcript: { t_ms: number; ts: string; text: string }[]; markers: Marker[];
 };
 export type Health = { ok: boolean; ai_provider: string };
+export type Role = 'administrator' | 'registration_staff' | 'council' | 'fiscal_auditor' | 'owner';
+export type Membership = { community_id: string; community_name: string; roles: Role[] };
+export type Me = { person_id: string | null; email: string | null; display_name: string | null; is_super_admin: boolean; memberships: Membership[] };
 
 export class ApiError extends Error {
   status: number;
@@ -34,7 +37,8 @@ const json = (method: string, body: unknown): RequestInit => ({ method, headers:
 
 export const api = {
   health: () => call<Health>('/health'),
-  start: (body: { meeting_id: number; title: string; community: string; consent_by: string; context: object }) => call<RecView>('/recordings', json('POST', body)),
+  me: () => call<Me>('/me'),
+  start: (body: { community_id: string; meeting_id: number; title: string; consent_by: string; context: object }) => call<RecView>('/recordings', json('POST', body)),
   uploadChunk: (id: string, seq: number, startMs: number, durationMs: number, blob: Blob) =>
     call<void>(`/recordings/${rid(id)}/chunks/${int(seq)}?${new URLSearchParams({ start_ms: String(int(startMs)), duration_ms: String(int(durationMs)) })}`, { method: 'PUT', headers: { 'content-type': /^audio\/[\w.+-]+(;\s*codecs=[\w.,\s]+)?$/.test(blob.type) ? blob.type : 'audio/webm' }, body: blob }),
   finish: (id: string, markers: Marker[], context: object) => call<RecView>(`/recordings/${rid(id)}/finish`, json('POST', { markers, context })),

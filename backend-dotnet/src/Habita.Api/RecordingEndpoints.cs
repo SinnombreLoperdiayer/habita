@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Habita.Application;
 using Habita.Domain;
 using Microsoft.AspNetCore.Diagnostics;
@@ -8,21 +9,27 @@ namespace Habita.Api;
 /// <summary>Adaptador de entrada HTTP: rutas /api/*.</summary>
 public static class RecordingEndpoints
 {
+    /// <summary>Roles que pueden grabar y revisar el borrador. La Secretaría se agregará con las funciones de asamblea.</summary>
+    private static readonly CommunityRole[] RecordingRoles = [CommunityRole.Administrator];
+
     public static IEndpointRouteBuilder MapHabitaApi(this IEndpointRouteBuilder app)
     {
-        var api = app.MapGroup("/api");
+        var api = app.MapGroup("/api").RequireAuthorization();
 
-        api.MapGet("/health", (RecordingService svc) => new HealthResponse(true, svc.ProviderName));
+        api.MapGet("/health", (RecordingService svc) => new HealthResponse(true, svc.ProviderName)).AllowAnonymous();
 
         var rec = api.MapGroup("/recordings").WithTags("Grabaciones");
 
-        rec.MapPost("", async (StartRecordingRequest body, RecordingService svc, CancellationToken ct) =>
+        rec.MapPost("", async (StartRecordingRequest body, ClaimsPrincipal user, AccessService access, RecordingService svc, CancellationToken ct) =>
         {
-            var r = await svc.StartAsync(body.MeetingId, body.Title, body.Community, body.ConsentBy, body.Context, ct);
+            var community = await access.RequireRoleAsync(user.ToCaller(), body.CommunityId, RecordingRoles, ct);
+            var r = await svc.StartAsync(community, body.MeetingId, body.Title, body.ConsentBy, body.Context, ct);
             return Results.Created($"/api/recordings/{r.Id}", RecordingResponse.From(r, []));
         });
 
-        rec.MapPut("/{id}/chunks/{seq:int}", async (
+        var item = rec.MapGroup("/{id}").AddEndpointFilter(RequireRecordingAccessAsync);
+
+        item.MapPut("/chunks/{seq:int}", async (
             string id, int seq, HttpRequest request, RecordingService svc, CancellationToken ct,
             [FromQuery(Name = "start_ms")] long startMs = 0,
             [FromQuery(Name = "duration_ms")] long durationMs = 60000) =>
@@ -34,29 +41,50 @@ public static class RecordingEndpoints
             return Results.NoContent();
         });
 
-        rec.MapPost("/{id}/finish", async (string id, FinishRecordingRequest body, RecordingService svc, CancellationToken ct) =>
+        item.MapPost("/finish", async (string id, FinishRecordingRequest body, RecordingService svc, CancellationToken ct) =>
         {
             var markers = (body.Markers ?? []).Select(RecordingResponse.ToMarker).ToList();
             var r = await svc.FinishAsync(id, markers, body.Context, ct);
             return RecordingResponse.From(r, await svc.ChunksAsync(id, ct));
         });
 
-        rec.MapGet("/{id}", async (string id, RecordingService svc, CancellationToken ct) =>
+        item.MapGet("", async (string id, RecordingService svc, CancellationToken ct) =>
         {
             var (r, chunks) = await svc.ViewAsync(id, ct);
             return RecordingResponse.From(r, chunks);
         });
 
-        rec.MapPost("/{id}/regenerate", async (string id, RecordingService svc, CancellationToken ct) =>
+        item.MapPost("/regenerate", async (string id, RecordingService svc, CancellationToken ct) =>
             RecordingResponse.From(await svc.RegenerateAsync(id, ct), await svc.ChunksAsync(id, ct)));
 
-        rec.MapPut("/{id}/draft", async (string id, DraftRequest body, RecordingService svc, CancellationToken ct) =>
+        item.MapPut("/draft", async (string id, DraftRequest body, RecordingService svc, CancellationToken ct) =>
             RecordingResponse.From(await svc.SaveDraftAsync(id, body.Draft, ct), await svc.ChunksAsync(id, ct)));
 
-        rec.MapDelete("/{id}/audio", async (string id, RecordingService svc, CancellationToken ct) =>
+        item.MapDelete("/audio", async (string id, RecordingService svc, CancellationToken ct) =>
             RecordingResponse.From(await svc.DeleteAudioAsync(id, ct), await svc.ChunksAsync(id, ct)));
 
         return app;
+    }
+
+    /// <summary>
+    /// Verifica el rol de quien llama en la comunidad dueña de la grabación. A quien no pertenece a esa
+    /// comunidad se le responde 404, para no revelar que la grabación existe.
+    /// </summary>
+    private static async ValueTask<object?> RequireRecordingAccessAsync(EndpointFilterInvocationContext ctx, EndpointFilterDelegate next)
+    {
+        var http = ctx.HttpContext;
+        var id = http.Request.RouteValues["id"] as string ?? "";
+        var communityId = await http.RequestServices.GetRequiredService<RecordingService>().CommunityIdOfAsync(id, http.RequestAborted);
+        try
+        {
+            await http.RequestServices.GetRequiredService<AccessService>()
+                .RequireRoleAsync(http.User.ToCaller(), communityId, RecordingRoles, http.RequestAborted);
+        }
+        catch (CommunityNotFoundException)
+        {
+            throw new RecordingNotFoundException(id);
+        }
+        return await next(ctx);
     }
 }
 
@@ -69,6 +97,8 @@ internal sealed class ApiExceptionHandler(IProblemDetailsService problems) : IEx
         {
             DomainException e => (StatusCodes.Status422UnprocessableEntity, e.Message),
             RecordingNotFoundException => (StatusCodes.Status404NotFound, "Grabación no encontrada"),
+            CommunityNotFoundException => (StatusCodes.Status404NotFound, "Comunidad no encontrada"),
+            AccessDeniedException e => (StatusCodes.Status403Forbidden, e.Message),
             BadHttpRequestException e => (e.StatusCode, "Solicitud inválida: revisa el formato del cuerpo y de los parámetros."),
             _ => null,
         };

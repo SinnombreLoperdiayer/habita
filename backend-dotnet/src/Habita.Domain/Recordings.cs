@@ -20,6 +20,7 @@ public sealed class Recording
     private Recording() { } // EF Core
 
     public string Id { get; private set; } = "";
+    public string CommunityId { get; private set; } = "";
     public int MeetingId { get; private set; }
     public string Title { get; private set; } = "";
     public string Community { get; private set; } = "";
@@ -36,16 +37,17 @@ public sealed class Recording
 
     public bool IsProcessing => Status is RecordingStatus.Queued or RecordingStatus.Transcribing or RecordingStatus.Drafting;
 
-    public static Recording Start(int meetingId, string title, string community, string consentBy, MeetingContext? context, DateTimeOffset now)
+    public static Recording Start(Community community, int meetingId, string title, string consentBy, MeetingContext? context, DateTimeOffset now)
     {
         if (string.IsNullOrWhiteSpace(consentBy))
             throw new DomainException("Se requiere registrar quién autoriza la grabación (consentimiento).");
         return new Recording
         {
-            Id = Guid.NewGuid().ToString("N")[..12],
+            Id = Ids.New(),
+            CommunityId = community.Id,
             MeetingId = meetingId,
             Title = title,
-            Community = community,
+            Community = community.Name,
             ConsentBy = consentBy.Trim(),
             ConsentAt = now,
             CreatedAt = now,

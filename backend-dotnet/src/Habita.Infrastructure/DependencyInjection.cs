@@ -26,6 +26,7 @@ public static class DependencyInjection
             else o.UseSqlServer(connection, sql => sql.EnableRetryOnFailure());
         });
         services.AddSingleton<IRecordingRepository, EfRecordingRepository>();
+        services.AddSingleton<IAccessRepository, EfAccessRepository>();
 
         // Audio original en disco (Blob Storage en producción).
         services.AddSingleton<IAudioStore>(sp =>

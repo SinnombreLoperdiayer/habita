@@ -11,6 +11,7 @@ public static class DependencyInjection
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<RecordingAi>();
         services.AddSingleton<RecordingService>();
+        services.AddSingleton<AccessService>();
         return services;
     }
 }

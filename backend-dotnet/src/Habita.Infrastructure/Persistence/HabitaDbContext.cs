@@ -17,14 +17,54 @@ public sealed class HabitaDbContext(DbContextOptions<HabitaDbContext> options) :
 
     public DbSet<Recording> Recordings => Set<Recording>();
     public DbSet<Chunk> Chunks => Set<Chunk>();
+    public DbSet<Community> Communities => Set<Community>();
+    public DbSet<Person> People => Set<Person>();
+    public DbSet<Membership> Memberships => Set<Membership>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<Community>(e =>
+        {
+            e.ToTable("Communities");
+            e.HasKey(c => c.Id);
+            e.Property(c => c.Id).HasMaxLength(32).IsUnicode(false);
+            e.Property(c => c.Name).HasMaxLength(Community.MaxNameLength);
+        });
+
+        modelBuilder.Entity<Person>(e =>
+        {
+            e.ToTable("People");
+            e.HasKey(p => p.Id);
+            e.Property(p => p.Id).HasMaxLength(32).IsUnicode(false);
+            e.Property(p => p.ExternalId).HasMaxLength(Person.MaxExternalIdLength).IsUnicode(false);
+            e.Property(p => p.Email).HasMaxLength(Person.MaxEmailLength);
+            e.Property(p => p.DisplayName).HasMaxLength(Person.MaxNameLength);
+            e.Ignore(p => p.IsLinked);
+            // Índices únicos sobre columnas que admiten NULL: SQL Server los filtra con "IS NOT NULL".
+            e.HasIndex(p => p.ExternalId).IsUnique();
+            e.HasIndex(p => p.Email).IsUnique();
+        });
+
+        modelBuilder.Entity<Membership>(e =>
+        {
+            e.ToTable("Memberships");
+            e.HasKey(m => new { m.CommunityId, m.PersonId, m.Role });
+            e.Property(m => m.CommunityId).HasMaxLength(32).IsUnicode(false);
+            e.Property(m => m.PersonId).HasMaxLength(32).IsUnicode(false);
+            e.Property(m => m.Role).HasConversion<string>().HasMaxLength(30).IsUnicode(false);
+            e.HasOne<Community>().WithMany().HasForeignKey(m => m.CommunityId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Person>().WithMany().HasForeignKey(m => m.PersonId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(m => m.PersonId);
+        });
+
         modelBuilder.Entity<Recording>(e =>
         {
             e.ToTable("Recordings");
             e.HasKey(r => r.Id);
             e.Property(r => r.Id).HasMaxLength(32).IsUnicode(false);
+            // Sin clave foránea: las grabaciones anteriores al control de acceso quedan con CommunityId vacío.
+            e.Property(r => r.CommunityId).HasMaxLength(32).IsUnicode(false);
+            e.HasIndex(r => r.CommunityId);
             e.Property(r => r.Title).HasMaxLength(300);
             e.Property(r => r.Community).HasMaxLength(300);
             e.Property(r => r.ConsentBy).HasMaxLength(200);

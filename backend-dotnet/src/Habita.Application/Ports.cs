@@ -8,6 +8,8 @@ public interface IRecordingRepository
 {
     Task AddAsync(Recording recording, CancellationToken ct = default);
     Task<Recording?> GetAsync(string id, CancellationToken ct = default);
+    /// <summary>Comunidad a la que pertenece la grabación, o null si no existe.</summary>
+    Task<string?> GetCommunityIdAsync(string id, CancellationToken ct = default);
     Task SaveAsync(Recording recording, CancellationToken ct = default);
     Task<IReadOnlyList<string>> ListPendingIdsAsync(CancellationToken ct = default);
     Task UpsertChunkAsync(Chunk chunk, CancellationToken ct = default);
@@ -38,6 +40,25 @@ public interface ITextGenerator
 public interface IJobQueue
 {
     void Enqueue(string recordingId);
+}
+
+/// <summary>Comunidades, personas y sus roles (Azure SQL).</summary>
+public interface IAccessRepository
+{
+    Task AddCommunityAsync(Community community, CancellationToken ct = default);
+    Task<Community?> GetCommunityAsync(string id, CancellationToken ct = default);
+    Task<Person?> FindPersonByExternalIdAsync(string externalId, CancellationToken ct = default);
+    Task<Person?> FindPersonByEmailAsync(string email, CancellationToken ct = default);
+    Task AddPersonAsync(Person person, CancellationToken ct = default);
+    /// <summary>Vincula una persona invitada con su cuenta externa. Devuelve false si ya estaba vinculada.</summary>
+    Task<bool> TryLinkAsync(string personId, string externalId, string? displayName, CancellationToken ct = default);
+    Task<IReadOnlyList<CommunityRole>> GetRolesAsync(string personId, string communityId, CancellationToken ct = default);
+    Task<IReadOnlyList<MembershipView>> GetMembershipsAsync(string personId, CancellationToken ct = default);
+    Task<IReadOnlyList<Member>> GetMembersAsync(string communityId, CancellationToken ct = default);
+    /// <summary>Agrega el rol si no existía. Devuelve false si la persona ya lo tenía.</summary>
+    Task<bool> AddMembershipAsync(Membership membership, CancellationToken ct = default);
+    Task<bool> RemoveMembershipAsync(string communityId, string personId, CommunityRole role, CancellationToken ct = default);
+    Task<int> CountRoleAsync(string communityId, CommunityRole role, CancellationToken ct = default);
 }
 
 public sealed class RecordingNotFoundException(string id) : Exception($"Grabación no encontrada: {id}");

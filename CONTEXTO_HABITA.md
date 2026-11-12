@@ -9,7 +9,7 @@ Sistema web, en español, para sesiones de asamblea de copropietarios en Colombi
 | Espacio de trabajo (`src/App.tsx`) | Hecho | Comunidad, propietarios, reuniones, votaciones, orden del día, documentos. Persistido en localStorage `habita-workspace-v1`. |
 | Registro de asistencia (`src/Checkin.tsx`, `src/lib/checkin.ts`) | Hecho | Preregistro con QR, puesto de registro con cámara, indicadores. |
 | Grabación y acta (`src/Recorder.tsx`, `src/lib/recorderApi.ts`, `backend-dotnet/`) | Prototipo en .NET 10 | Graba en segmentos, sube, transcribe y genera borrador de acta. |
-| Login y roles | En diseño | Ver sección 1.3. |
+| Login y roles (`backend-dotnet/`, `/api/me`) | API lista; falta el login en el frontend | Entra External ID, comunidades, miembros y roles. Ver sección 1.3. |
 
 ### 1.1 Registro de asistencia
 - Pestañas: Puesto de registro, Preregistro y pases, Indicadores.
@@ -44,6 +44,17 @@ Canales: registro con pase en el celular, pase impreso, búsqueda con cédula o 
 
 Pendiente que decidan las administraciones y consejos: límite de poderes por persona, si la administración o la revisoría pueden recibir poderes, si la llegada del propietario suspende el poder, asistencia a distancia en la fase 1, tarjetas a mano alzada o en urna, y forma de entrega de los pases impresos.
 
+#### Implementado en la API (12/11/2026)
+- **Autenticación** (`Habita.Api/Authentication.cs`), según `Authentication:Mode`:
+  - `EntraExternalId` (por defecto): JWT de Entra External ID validados con los metadatos del tenant (`Authority`) y la audiencia de la API (`Audience`, se acepta también `api://<audience>`). Si falta la configuración, la API no arranca.
+  - `Development` (en `appsettings.Development.json`): toda solicitud entra como el usuario configurado en `Authentication:Development`, que es superadministración. Al arrancar se crea la comunidad "Conjunto Los Olivos" con ese usuario como administración. La API se niega a arrancar con este modo fuera del entorno Development.
+- **Identidad:** claim `oid` como identificador de la cuenta; `email` y `name` para vincular invitaciones; el app role `Habita.SuperAdmin` (claim `roles`) marca la superadministración.
+- **Invitaciones:** la administración agrega personas por correo y rol. La primera vez que alguien inicia sesión con ese correo, su cuenta queda vinculada (`People.ExternalId`). Una invitación ya vinculada no se reasigna a otra cuenta. Quien inicia sesión sin invitación no se guarda en la base.
+- **Reglas** (`AccessService`): solo la superadministración crea comunidades; la administración (o la superadministración) gestiona miembros; no se puede quitar el último rol de administración; quien no pertenece a una comunidad recibe 404, y quien pertenece sin el rol necesario recibe 403. La superadministración no ve grabaciones.
+- **Grabaciones:** todas las rutas exigen sesión (salvo `/api/health`). Crear, subir, finalizar, ver, regenerar, editar y borrar audio exige el rol de administración en la comunidad de la grabación; la Secretaría se agregará con las funciones de asamblea. El nombre de la comunidad del acta sale de la comunidad registrada.
+- **Base de datos** (migración `AddAccessControl`): tablas `Communities`, `People` (índices únicos filtrados en `ExternalId` y `Email`) y `Memberships` (clave comunidad + persona + rol), y columna `Recordings.CommunityId`. Las grabaciones anteriores quedan con `CommunityId` vacío y responden 404.
+- **Frontend:** `Recorder.tsx` consulta `/api/me` y graba en la comunidad donde la persona tiene rol de administración. Todavía no hay pantalla de inicio de sesión, así que hoy el frontend solo funciona con la API en modo `Development`.
+
 ## 2. Stack
 
 **Frontend:** React 19, TypeScript 6, Vite 8, Tailwind 4, lucide-react, eslint 10 (react-hooks 7). `node_modules` no está en git: se instala con `npm ci` a partir de `package-lock.json`.
@@ -57,32 +68,49 @@ backend-dotnet/
   Habita.sln · Directory.Build.props (net10.0) · Directory.Packages.props (versiones centralizadas)
   nuget.config (solo nuget.org) · dotnet-tools.json (dotnet-ef)
   src/Habita.Domain/          Recording, Chunk, Marker, MeetingContext, DomainException. Sin dependencias.
-  src/Habita.Application/     Ports.cs (IRecordingRepository, IAudioStore, ITranscriber, ITextGenerator, IJobQueue)
+                              Access.cs: Community, Person, Membership, CommunityRole
+  src/Habita.Application/     Ports.cs (IRecordingRepository, IAccessRepository, IAudioStore, ITranscriber, ITextGenerator, IJobQueue)
                               RecordingService (casos de uso y procesamiento), RecordingAi (agrupa transcriptor y redactor)
+                              AccessService (perfil, comunidades, miembros, verificación de roles), Caller
                               ActaDrafting (secciones, prompts, plantilla del acta)
-  src/Habita.Infrastructure/  Persistence/ (HabitaDbContext, EfRecordingRepository, Migrations/)
+  src/Habita.Infrastructure/  Persistence/ (HabitaDbContext, EfRecordingRepository, EfAccessRepository, Migrations/)
                               Storage/FileAudioStore · Ai/ (AzureOpenAiAdapter, DemoAiAdapter, UnconfiguredAiAdapter)
                               Queue/ (ChannelJobQueue, RecordingWorker) · DependencyInjection.cs
-  src/Habita.Api/             Program.cs, RecordingEndpoints.cs (rutas + ApiExceptionHandler), Contracts.cs (DTO snake_case)
-  tests/Habita.Tests/         23 casos: flujo HTTP con SQLite e IA falsa, adaptador Azure contra servidor falso, dominio
+  src/Habita.Api/             Program.cs, Authentication.cs (Entra External ID y modo Development)
+                              RecordingEndpoints.cs (rutas + ApiExceptionHandler), AccessEndpoints.cs
+                              Contracts.cs y AccessContracts.cs (DTO snake_case)
+  tests/Habita.Tests/         41 casos: flujo HTTP con SQLite e IA falsa, acceso con JWT firmados con clave de prueba,
+                              adaptador Azure contra servidor falso, dominio
 ```
 
 Detalles:
 - Contrato HTTP en JSON snake_case, el que espera `src/lib/recorderApi.ts`.
-- Los errores salen como ProblemDetails con `detail`: 422 regla de negocio, 404 no encontrada, 400 formato inválido.
+- Los errores salen como ProblemDetails con `detail`: 422 regla de negocio, 404 no encontrada, 403 rol sin permiso, 400 formato inválido. Sin sesión válida responde 401 (sin cuerpo).
 - Tablas `Recordings` y `Chunks` (FK con borrado en cascada). `Markers` y `Context` se guardan como JSON en `nvarchar(max)`, consultables con `JSON_VALUE`.
 - El repositorio crea un `DbContext` corto por operación (`IDbContextFactory`), así que el worker puede escribir en paralelo.
 - `Program` es `public partial class` con constructor `protected`; no puede ser `static` porque las pruebas usan `WebApplicationFactory<Program>`.
 
 ### API
-- `GET /api/health`
-- `POST /api/recordings`
+Todas las rutas exigen sesión salvo `/api/health`.
+
+Grabaciones (rol de administración en la comunidad):
+- `GET /api/health` (sin sesión)
+- `POST /api/recordings` (cuerpo con `community_id`, `meeting_id`, `title`, `consent_by`, `context`)
 - `PUT /api/recordings/{id}/chunks/{seq}?start_ms&duration_ms` (cuerpo binario)
 - `POST /api/recordings/{id}/finish`
 - `GET /api/recordings/{id}`
 - `POST /api/recordings/{id}/regenerate`
 - `PUT /api/recordings/{id}/draft`
 - `DELETE /api/recordings/{id}/audio`
+
+Acceso:
+- `GET /api/me`: perfil, si es superadministración y comunidades con sus roles. Vincula la invitación pendiente del correo.
+- `POST /api/communities` (superadministración): `{ name, admin_email }`.
+- `GET /api/communities/{id}/members` (administración o superadministración).
+- `POST /api/communities/{id}/members` (administración o superadministración): `{ email, role, display_name? }`.
+- `DELETE /api/communities/{id}/members/{personId}/roles/{role}` (administración o superadministración).
+
+Roles en el contrato: `administrator`, `registration_staff`, `council`, `fiscal_auditor`, `owner`.
 
 ### Selección del proveedor de IA (backend .NET)
 Configuración `Ai:Provider`:
@@ -112,7 +140,7 @@ Correspondencia del prototipo con producción:
 | `FileAudioStore` (disco) | Blob Storage (nuevo adaptador de `IAudioStore`) |
 | `ChannelJobQueue` + `RecordingWorker` en proceso | Service Bus + worker separado (nuevo adaptador de `IJobQueue`) |
 | Clave de API de Azure OpenAI | Identidad administrada (`AuthenticationPolicy` del SDK) |
-| Sin autenticación | Entra ID (JWT) con roles (en diseño) |
+| Modo `Development` de autenticación | Entra External ID (JWT), ya implementado en la API |
 
 ## 4. Marco legal
 - Ley 1581 de 2012: la voz es dato personal, así que se requiere consentimiento informado y política de retención. El audio se puede borrar desde la interfaz.
@@ -142,6 +170,27 @@ npm run dev
 ```
 
 - Swagger UI (solo en Development): `http://localhost:8100/swagger`. Con el perfil `http` de `launchSettings.json` se abre solo. El documento OpenAPI está en `http://localhost:8100/openapi/v1.json`.
+- En Development la API usa el modo de autenticación `Development`: no pide token y entra como la superadministración de desarrollo, con la comunidad "Conjunto Los Olivos" ya creada.
+
+### Configurar Microsoft Entra External ID
+1. En el centro de administración de Microsoft Entra, crea un **tenant externo** (External ID). Anota el id del tenant y su subdominio (`<subdominio>.ciamlogin.com`).
+2. Registra la app **Habita API**:
+   - Anota el *Application (client) ID*: es `Audience`.
+   - En el manifiesto, `requestedAccessTokenVersion: 2`, para que los tokens usen el emisor v2.
+   - *Expose an API*: Application ID URI `api://<client-id>` y un scope `access_as_user`.
+   - *App roles*: `Habita.SuperAdmin` (miembros: usuarios y grupos).
+   - *Token configuration*: claim opcional `email` en el **access token** (sin él no se pueden vincular las invitaciones).
+3. En *Enterprise applications → Habita API → Users and groups*, asigna `Habita.SuperAdmin` al equipo de Habita.
+4. Crea un flujo de usuario de registro e inicio de sesión con **código de un solo uso por correo**.
+5. (Siguiente paso, con el login del frontend) Registra la app **Habita Web** como SPA, con redirección `http://localhost:5173`, permiso al scope `access_as_user` y asociada al flujo de usuario.
+6. Configura la API con user-secrets y arráncala en modo Entra:
+```powershell
+cd backend-dotnet
+dotnet user-secrets --project src/Habita.Api set "Authentication:EntraExternalId:Authority" "https://<subdominio>.ciamlogin.com/<id-del-tenant>/v2.0"
+dotnet user-secrets --project src/Habita.Api set "Authentication:EntraExternalId:Audience" "<client-id de Habita API>"
+dotnet run --project src/Habita.Api -- --Authentication:Mode=EntraExternalId
+```
+En producción: variables `Authentication__EntraExternalId__Authority` y `Authentication__EntraExternalId__Audience`, o Key Vault. La primera comunidad la crea la superadministración con `POST /api/communities`.
 
 Azure OpenAI (secretos fuera del repositorio, con user-secrets):
 ```powershell
@@ -167,7 +216,9 @@ Finales de línea: `.gitattributes` (`* text=auto`) hace que git guarde LF; cada
 
 ## 7. Limitaciones conocidas
 - La transcripción real con Azure no está verificada: faltan credenciales y solo se probó contra un servidor Azure falso (rutas v1, credencial y parámetros).
-- No hay autenticación en la API.
+- La autenticación con un tenant real de Entra External ID no está verificada: las pruebas usan tokens firmados con una clave de prueba (emisor, audiencia, firma y claims).
+- El frontend no tiene pantalla de inicio de sesión: solo funciona con la API en modo `Development`.
+- Las funciones de asamblea (Presidencia, Secretaría) y la representación (poderes) aún no existen; por ahora solo la administración graba.
 - Sin diarización (identificación de hablantes).
 - La asignación de segmentos a secciones usa el punto medio, así que puede errar en los límites.
 - El quórum cuenta unidades, no coeficientes.
@@ -175,10 +226,11 @@ Finales de línea: `.gitattributes` (`* text=auto`) hace que git guarde LF; cada
 - Los flujos de micrófono y cámara no se probaron en un navegador real.
 
 ## 8. Pendientes
-1. Login con roles (en diseño).
-2. Probar con Azure OpenAI real.
-3. Módulo de poderes y coeficientes (Ley 675).
-4. Sincronización entre varios puestos de registro.
-5. Regeneración de tokens de check-in faltantes.
-6. Completar la arquitectura de producción en .NET (sección 3): Blob Storage, Service Bus con worker separado, Entra ID, Key Vault.
-7. Configuración de publicación.
+1. Login en el frontend con MSAL (Entra External ID) y envío del token a la API; probar con un tenant real.
+2. Funciones de asamblea (Presidencia, Secretaría) y representación (poderes) en la API.
+3. Probar con Azure OpenAI real.
+4. Módulo de poderes y coeficientes (Ley 675).
+5. Sincronización entre varios puestos de registro.
+6. Regeneración de tokens de check-in faltantes.
+7. Completar la arquitectura de producción en .NET (sección 3): Blob Storage, Service Bus con worker separado, Entra ID, Key Vault.
+8. Configuración de publicación.

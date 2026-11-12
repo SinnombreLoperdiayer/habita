@@ -42,12 +42,16 @@ public sealed class RecordingService(
 
     // ---- captura --------------------------------------------------------
 
-    public async Task<Recording> StartAsync(int meetingId, string title, string community, string consentBy, MeetingContext? context, CancellationToken ct = default)
+    public async Task<Recording> StartAsync(Community community, int meetingId, string title, string consentBy, MeetingContext? context, CancellationToken ct = default)
     {
-        var rec = Recording.Start(meetingId, title, community, consentBy, context, clock.GetUtcNow());
+        var rec = Recording.Start(community, meetingId, title, consentBy, context, clock.GetUtcNow());
         await repo.AddAsync(rec, ct);
         return rec;
     }
+
+    /// <summary>Comunidad dueña de la grabación; la API la usa para verificar el rol de quien llama.</summary>
+    public async Task<string> CommunityIdOfAsync(string recordingId, CancellationToken ct = default) =>
+        await repo.GetCommunityIdAsync(recordingId, ct) ?? throw new RecordingNotFoundException(recordingId);
 
     public async Task<Chunk> UploadChunkAsync(string recordingId, int seq, long startMs, long durationMs, string contentType, ReadOnlyMemory<byte> data, CancellationToken ct = default)
     {

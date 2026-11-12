@@ -6,7 +6,8 @@ namespace Habita.Api;
 
 // Contrato HTTP: JSON en snake_case, el mismo que espera el frontend (src/lib/recorderApi.ts).
 
-public sealed record StartRecordingRequest(int MeetingId, string Title, string Community, string ConsentBy, MeetingContext? Context = null);
+/// <summary>El nombre de la comunidad para el acta se toma de la comunidad registrada, no del cliente.</summary>
+public sealed record StartRecordingRequest(string CommunityId, int MeetingId, string Title, string ConsentBy, MeetingContext? Context = null);
 
 public sealed record MarkerRequest([property: JsonPropertyName("t_ms")] long TMs, string Kind, string Label);
 

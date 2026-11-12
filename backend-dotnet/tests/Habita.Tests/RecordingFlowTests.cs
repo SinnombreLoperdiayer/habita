@@ -9,11 +9,15 @@ namespace Habita.Tests;
 /// <summary>Flujo HTTP completo de grabación, transcripción y borrador del acta.</summary>
 public sealed class RecordingFlowTests
 {
-    private static async Task<string> StartAsync(HttpClient c)
+    /// <summary>Crea la comunidad y devuelve un cliente con el rol de administración en ella.</summary>
+    private static async Task<(HttpClient Client, string CommunityId)> AdminAsync(HabitaApiFactory app) =>
+        (app.ClientFor(TestUser.Admin), await app.CreateCommunityAsync());
+
+    private static async Task<string> StartAsync(HttpClient c, string communityId)
     {
         var r = await c.PostAsJsonAsync("/api/recordings", new
         {
-            meeting_id = 1, title = "Asamblea", community = "Los Olivos", consent_by = "Presidente",
+            community_id = communityId, meeting_id = 1, title = "Asamblea", consent_by = "Presidente",
             context = new
             {
                 date = "2026-11-09",
@@ -51,8 +55,8 @@ public sealed class RecordingFlowTests
     public async Task Consent_is_required()
     {
         using var app = new HabitaApiFactory(new FakeAi());
-        var c = app.CreateClient();
-        var r = await c.PostAsJsonAsync("/api/recordings", new { meeting_id = 1, title = "x", community = "y", consent_by = " " });
+        var (c, community) = await AdminAsync(app);
+        var r = await c.PostAsJsonAsync("/api/recordings", new { community_id = community, meeting_id = 1, title = "x", consent_by = " " });
         Assert.Equal(HttpStatusCode.UnprocessableEntity, r.StatusCode);
         Assert.Contains("consentimiento", (await r.Content.ReadFromJsonAsync<JsonObject>())!["detail"]!.GetValue<string>(), StringComparison.Ordinal);
     }
@@ -61,8 +65,8 @@ public sealed class RecordingFlowTests
     public async Task Full_flow_drafts_one_section_per_agenda_marker()
     {
         using var app = new HabitaApiFactory(new FakeAi());
-        var c = app.CreateClient();
-        var id = await StartAsync(c);
+        var (c, community) = await AdminAsync(app);
+        var id = await StartAsync(c, community);
         for (var seq = 0; seq < 3; seq++)
             Assert.Equal(HttpStatusCode.NoContent, (await UploadAsync(c, id, seq, $"?start_ms={seq * 60000}&duration_ms=60000", "audio/webm;codecs=opus")).StatusCode);
 
@@ -89,8 +93,8 @@ public sealed class RecordingFlowTests
     {
         var ai = new FakeAi();
         using var app = new HabitaApiFactory(ai);
-        var c = app.CreateClient();
-        var id = await StartAsync(c);
+        var (c, community) = await AdminAsync(app);
+        var id = await StartAsync(c, community);
         for (var seq = 0; seq < 3; seq++) await UploadAsync(c, id, seq, $"?start_ms={seq * 60000}&duration_ms=60000");
         await FinishAsync(c, id, new { t_ms = 0, kind = "agenda", label = "A" }, new { t_ms = 90000, kind = "agenda", label = "B" });
         await WaitDoneAsync(c, id);
@@ -108,8 +112,8 @@ public sealed class RecordingFlowTests
     {
         // Pasa cuando el servidor guardó el fragmento pero la respuesta no llegó y el navegador lo reenvía.
         using var app = new HabitaApiFactory(new FakeAi());
-        var c = app.CreateClient();
-        var id = await StartAsync(c);
+        var (c, community) = await AdminAsync(app);
+        var id = await StartAsync(c, community);
         Assert.Equal(HttpStatusCode.NoContent, (await UploadAsync(c, id, 0, "?start_ms=0&duration_ms=60000")).StatusCode);
         Assert.Equal(HttpStatusCode.NoContent, (await UploadAsync(c, id, 0, "?start_ms=0&duration_ms=60000", body: "abcdef"u8.ToArray())).StatusCode);
 
@@ -124,8 +128,8 @@ public sealed class RecordingFlowTests
     public async Task Partial_failure_still_produces_a_draft()
     {
         using var app = new HabitaApiFactory(new FakeAi("-1."));
-        var c = app.CreateClient();
-        var id = await StartAsync(c);
+        var (c, community) = await AdminAsync(app);
+        var id = await StartAsync(c, community);
         for (var seq = 0; seq < 2; seq++) await UploadAsync(c, id, seq, $"?start_ms={seq * 60000}");
         await FinishAsync(c, id);
         var j = await WaitDoneAsync(c, id);
@@ -139,8 +143,8 @@ public sealed class RecordingFlowTests
     public async Task All_chunks_failing_marks_the_recording_failed()
     {
         using var app = new HabitaApiFactory(new FakeAi("-"));
-        var c = app.CreateClient();
-        var id = await StartAsync(c);
+        var (c, community) = await AdminAsync(app);
+        var id = await StartAsync(c, community);
         await UploadAsync(c, id, 0);
         await FinishAsync(c, id);
         var j = await WaitDoneAsync(c, id);
@@ -153,8 +157,8 @@ public sealed class RecordingFlowTests
     public async Task Draft_can_be_edited_and_audio_deleted()
     {
         using var app = new HabitaApiFactory(new FakeAi());
-        var c = app.CreateClient();
-        var id = await StartAsync(c);
+        var (c, community) = await AdminAsync(app);
+        var id = await StartAsync(c, community);
         await UploadAsync(c, id, 0);
         await FinishAsync(c, id);
         await WaitDoneAsync(c, id);
@@ -173,11 +177,11 @@ public sealed class RecordingFlowTests
     public async Task Health_reports_the_ai_provider_and_bad_markers_are_rejected()
     {
         using var app = new HabitaApiFactory(new FakeAi());
-        var c = app.CreateClient();
-        var health = await c.GetFromJsonAsync<JsonObject>("/api/health");
+        var health = await app.CreateClient().GetFromJsonAsync<JsonObject>("/api/health"); // sin sesión
         Assert.Equal("""{"ok":true,"ai_provider":"fake"}""", health!.ToJsonString());
 
-        var id = await StartAsync(c);
+        var (c, community) = await AdminAsync(app);
+        var id = await StartAsync(c, community);
         var r = await c.PostAsJsonAsync($"/api/recordings/{id}/finish", new { markers = new[] { new { t_ms = 0, kind = "otro", label = "x" } } });
         Assert.Equal(HttpStatusCode.UnprocessableEntity, r.StatusCode);
 

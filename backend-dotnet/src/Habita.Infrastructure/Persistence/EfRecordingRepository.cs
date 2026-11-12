@@ -23,6 +23,12 @@ internal sealed class EfRecordingRepository(IDbContextFactory<HabitaDbContext> f
         return await db.Recordings.AsNoTracking().FirstOrDefaultAsync(r => r.Id == id, ct);
     }
 
+    public async Task<string?> GetCommunityIdAsync(string id, CancellationToken ct = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        return await db.Recordings.Where(r => r.Id == id).Select(r => r.CommunityId).FirstOrDefaultAsync(ct);
+    }
+
     public async Task SaveAsync(Recording recording, CancellationToken ct = default)
     {
         await using var db = await factory.CreateDbContextAsync(ct);

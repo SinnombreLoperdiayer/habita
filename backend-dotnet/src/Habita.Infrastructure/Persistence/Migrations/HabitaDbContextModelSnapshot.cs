@@ -69,6 +69,90 @@ namespace Habita.Infrastructure.Persistence.Migrations
                     b.ToTable("Chunks", (string)null);
                 });
 
+            modelBuilder.Entity("Habita.Domain.Community", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Communities", (string)null);
+                });
+
+            modelBuilder.Entity("Habita.Domain.Membership", b =>
+                {
+                    b.Property<string>("CommunityId")
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<string>("PersonId")
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<string>("Role")
+                        .HasMaxLength(30)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(30)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.HasKey("CommunityId", "PersonId", "Role");
+
+                    b.HasIndex("PersonId");
+
+                    b.ToTable("Memberships", (string)null);
+                });
+
+            modelBuilder.Entity("Habita.Domain.Person", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(254)
+                        .HasColumnType("nvarchar(254)");
+
+                    b.Property<string>("ExternalId")
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Email")
+                        .IsUnique()
+                        .HasFilter("[Email] IS NOT NULL");
+
+                    b.HasIndex("ExternalId")
+                        .IsUnique()
+                        .HasFilter("[ExternalId] IS NOT NULL");
+
+                    b.ToTable("People", (string)null);
+                });
+
             modelBuilder.Entity("Habita.Domain.Recording", b =>
                 {
                     b.Property<string>("Id")
@@ -83,6 +167,12 @@ namespace Habita.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasMaxLength(300)
                         .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("CommunityId")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(32)");
 
                     b.Property<DateTimeOffset>("ConsentAt")
                         .HasColumnType("datetimeoffset");
@@ -131,6 +221,8 @@ namespace Habita.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CommunityId");
+
                     b.HasIndex("MeetingId");
 
                     b.HasIndex("Status");
@@ -143,6 +235,21 @@ namespace Habita.Infrastructure.Persistence.Migrations
                     b.HasOne("Habita.Domain.Recording", null)
                         .WithMany()
                         .HasForeignKey("RecordingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Habita.Domain.Membership", b =>
+                {
+                    b.HasOne("Habita.Domain.Community", null)
+                        .WithMany()
+                        .HasForeignKey("CommunityId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Habita.Domain.Person", null)
+                        .WithMany()
+                        .HasForeignKey("PersonId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
