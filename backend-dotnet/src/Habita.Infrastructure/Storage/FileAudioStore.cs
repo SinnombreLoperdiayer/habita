@@ -30,7 +30,6 @@ internal sealed class FileAudioStore : IAudioStore
         var canonicalPath = Path.GetFullPath(path);
         if (!canonicalPath.StartsWith(_root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Invalid file path.");
-        // Create y no CreateNew: si se pierde la respuesta, el navegador reenvía el mismo fragmento y debe reemplazarse.
         await using var file = new FileStream(canonicalPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
         await file.WriteAsync(data, ct);
         return key;
