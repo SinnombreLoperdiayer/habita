@@ -9,7 +9,7 @@ Sistema web, en español, para sesiones de asamblea de copropietarios en Colombi
 | Espacio de trabajo (`src/App.tsx`) | Hecho | Comunidad, propietarios, reuniones, votaciones, orden del día, documentos. Persistido en localStorage `habita-workspace-v1`. |
 | Registro de asistencia (`src/Checkin.tsx`, `src/lib/checkin.ts`) | Hecho | Preregistro con QR, puesto de registro con cámara, indicadores. |
 | Grabación y acta (`src/Recorder.tsx`, `src/lib/recorderApi.ts`, `backend-dotnet/`) | Prototipo en .NET 10 | Graba en segmentos, sube, transcribe y genera borrador de acta. |
-| Login y roles | En diseño | Ver Pendientes (sección 8). |
+| Login y roles | En diseño | Ver sección 1.3. |
 
 ### 1.1 Registro de asistencia
 - Pestañas: Puesto de registro, Preregistro y pases, Indicadores.
@@ -27,6 +27,22 @@ Flujo: consentimiento → grabar → subir segmentos → finalizar → transcrib
 - La cola sube los fragmentos pendientes en paralelo. El servidor guarda cada fragmento por su número y lo reemplaza si llega de nuevo (por eso `FileAudioStore` usa `FileMode.Create`, no `CreateNew`).
 - `recorderApi.ts` valida el id de grabación y los parámetros numéricos antes de armar la URL.
 - Backend: transcripción por segmento (concurrencia 3, 3 reintentos con espera creciente). Las secciones se asignan por marcadores, usando el punto medio de cada segmento. Cada sección se redacta con el LLM (concurrencia 4) con un prompt estricto: sin invenciones, `[POR CONFIRMAR]`, citas `[hh:mm:ss]`. Encabezado, quórum y tabla de votos se generan de forma determinista (`ActaDrafting.RenderActa`).
+
+### 1.3 Login y roles (propuesta v1, 12/11/2026)
+Decisiones confirmadas:
+- **Multi-comunidad:** Habita sirve a varias copropiedades; una persona puede tener roles distintos en cada una.
+- **Identidad:** Microsoft Entra External ID (código al correo, sin contraseña; verificación en dos pasos para Administración y Revisoría).
+- **Modelo híbrido de participación:** nadie queda excluido por no tener celular, internet o cuenta. El voto es de la unidad (coeficiente), todos los canales valen igual y cada unidad vota una sola vez por votación.
+
+Roles en tres niveles:
+- Plataforma: Superadministración Habita (único rol global, app role de Entra).
+- Comunidad (permanentes, guardados en Azure SQL como persona × comunidad × rol): Administración, Registro, Consejo de administración, Revisoría fiscal, Copropietarios y apoderados.
+- Asamblea (por reunión, vencen al aprobar el acta): Presidencia, Secretaría, Comisión de escrutinio y Comisión verificadora (opcionales).
+- La representación (propietario, cotitular designado, representante legal, apoderado) es un vínculo unidad → persona por asamblea, con soporte; no es un rol.
+
+Canales: registro con pase en el celular, pase impreso, búsqueda con cédula o a distancia; voto por celular (con cuenta o con código de 6 dígitos del puesto), tarjeta impresa con tres códigos, mesa asistida, votación nominal o a distancia.
+
+Pendiente que decidan las administraciones y consejos: límite de poderes por persona, si la administración o la revisoría pueden recibir poderes, si la llegada del propietario suspende el poder, asistencia a distancia en la fase 1, tarjetas a mano alzada o en urna, y forma de entrega de los pases impresos.
 
 ## 2. Stack
 
