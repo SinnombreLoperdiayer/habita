@@ -1,3 +1,5 @@
+import { entraConfigured, getApiToken, notifySessionExpired, TokenError } from './auth';
+
 export type Marker = { t_ms: number; kind: 'agenda' | 'vote' | 'note'; label: string };
 export type RecStatus = 'recording' | 'queued' | 'transcribing' | 'drafting' | 'ready' | 'failed';
 export type RecView = {
@@ -15,10 +17,21 @@ export class ApiError extends Error {
   constructor(message: string, status: number) { super(message); this.status = status; }
 }
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, init);
+/** Llama a la API con el token de la sesión. Los fallos de sesión salen como ApiError 401 y los de red como 0, que se reintentan. */
+async function call<T>(path: string, init?: RequestInit, auth = true): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (auth) {
+    try {
+      const token = await getApiToken();
+      if (token) headers.set('authorization', `Bearer ${token}`);
+    } catch (e) {
+      throw new ApiError(e instanceof Error ? e.message : 'Sin sesión.', e instanceof TokenError && e.kind === 'expired' ? 401 : 0);
+    }
+  }
+  const res = await fetch(`/api${path}`, { ...init, headers });
+  if (res.status === 401 && entraConfigured) notifySessionExpired();
   if (!res.ok) {
-    let detail = `Error ${res.status}`;
+    let detail = res.status === 401 ? 'Tu sesión no es válida para el servidor. Vuelve a iniciar sesión.' : `Error ${res.status}`;
     try { detail = ((await res.json()) as { detail?: string }).detail ?? detail; } catch { /* sin cuerpo */ }
     throw new ApiError(detail, res.status);
   }
@@ -36,7 +49,7 @@ const int = (n: number) => {
 const json = (method: string, body: unknown): RequestInit => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 export const api = {
-  health: () => call<Health>('/health'),
+  health: () => call<Health>('/health', undefined, false),
   me: () => call<Me>('/me'),
   start: (body: { community_id: string; meeting_id: number; title: string; consent_by: string; context: object }) => call<RecView>('/recordings', json('POST', body)),
   uploadChunk: (id: string, seq: number, startMs: number, durationMs: number, blob: Blob) =>
